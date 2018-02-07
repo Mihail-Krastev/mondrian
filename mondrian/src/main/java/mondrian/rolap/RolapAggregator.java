@@ -32,6 +32,16 @@ public abstract class RolapAggregator
 {
     private static int index = 0;
 
+    protected static Integer safeLongToInt (long val, long sentinal) {
+        if (val == sentinal) {
+            return null;
+        }
+        if ((int)val != val) {
+            throw new ArithmeticException("integer overflow");
+        }
+        return (int)val;
+    }
+
     public static final RolapAggregator Sum =
         new RolapAggregator("sum", index++, false) {
             public Object aggregate(
@@ -52,21 +62,19 @@ public abstract class RolapAggregator
                 assert rawData.size() > 0;
                 switch (datatype) {
                 case Integer:
-                    int sumInt = Integer.MIN_VALUE;
+                    long sum = Long.MIN_VALUE;
                     for (Object data : rawData) {
                         if (data != null) {
-                            if (sumInt == Integer.MIN_VALUE) {
-                                sumInt = 0;
+                            if (sum == Long.MIN_VALUE) {
+                                sum = 0;
                             }
-                            if (data instanceof Double) {
-                                data = ((Double) data).intValue();
-                            }
-                            sumInt += (Integer) data;
+                            sum += ((Number)data).longValue();
                         }
                     }
-                    return sumInt == Integer.MIN_VALUE
-                        ? null
-                        : sumInt;
+                    // It would be nice to return the long value here, but
+                    // callers expect only Integer or Double objects.
+                    // (Applies to min/max aggregators as well)
+                    return safeLongToInt(sum, Long.MIN_VALUE);
                 case Numeric:
                     double sumDouble = Double.MIN_VALUE;
                     for (Object data : rawData) {
@@ -121,15 +129,13 @@ public abstract class RolapAggregator
                 assert rawData.size() > 0;
                 switch (datatype) {
                 case Integer:
-                    int minInt = Integer.MAX_VALUE;
+                    long min = Long.MAX_VALUE;
                     for (Object data : rawData) {
                         if (data != null) {
-                            minInt = Math.min(minInt, (Integer)data);
+                            min = Math.min(min, ((Number)data).longValue());
                         }
                     }
-                    return minInt == Integer.MAX_VALUE
-                        ? null
-                        : minInt;
+                    return safeLongToInt(min, Long.MAX_VALUE);
                 case Numeric:
                     double minDouble = Double.MAX_VALUE;
                     for (Object data : rawData) {
@@ -171,15 +177,13 @@ public abstract class RolapAggregator
                 assert rawData.size() > 0;
                 switch (datatype) {
                 case Integer:
-                    int maxInt = Integer.MIN_VALUE;
+                    long max = Long.MIN_VALUE;
                     for (Object data : rawData) {
                         if (data != null) {
-                            maxInt = Math.max(maxInt, (Integer)data);
+                            max = Math.max(max, ((Number)data).longValue());
                         }
                     }
-                    return maxInt == Integer.MIN_VALUE
-                        ? null
-                        : maxInt;
+                    return safeLongToInt(max, Long.MIN_VALUE);
                 case Numeric:
                     double maxDouble = Double.MIN_VALUE;
                     for (Object data : rawData) {

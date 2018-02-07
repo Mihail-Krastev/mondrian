@@ -85,7 +85,7 @@ class DrillThroughQuerySpec extends AbstractQuerySpec {
         final List<String> columnNames,
         final Set<String> columnNameSet)
     {
-        String columnName = column.getName();
+        String columnName = column.getDrillThroughAlias();
         if (columnName != null) {
             // nothing
         } else if (column.getExpression() instanceof MondrianDef.Column) {
@@ -118,12 +118,12 @@ class DrillThroughQuerySpec extends AbstractQuerySpec {
 
     @Override
     protected boolean isPartOfSelect(RolapStar.Column col) {
-        return request.includeInSelect(col);
+        return request.includeInSelect(col) && col.showInDrillThrough();
     }
 
     @Override
     protected boolean isPartOfSelect(RolapStar.Measure measure) {
-        return request.includeInSelect(measure);
+        return request.includeInSelect(measure) && measure.showInDrillThrough();
     }
 
     public int getMeasureCount() {
@@ -202,7 +202,20 @@ class DrillThroughQuerySpec extends AbstractQuerySpec {
     }
 
     protected boolean isOrdered() {
-        return true;
+        return getOrderByOverride() == null;
+    }
+
+    protected String getOrderByOverride () {
+      RolapStar star = getStar();
+      RolapSchema schema = star.getSchema();
+      for (RolapCube cube : schema.getCubesWithStar(star)) {
+        Annotation orderOverride =
+          cube.getAnnotationMap().get("drillThroughOrderBy");
+        if (orderOverride != null) {
+          return (String)orderOverride.getValue();
+        }
+      }
+      return null;
     }
 
     protected List<StarPredicate> getPredicateList() {
@@ -227,13 +240,14 @@ class DrillThroughQuerySpec extends AbstractQuerySpec {
               //add to Select clause only columns
               //that are not yet in Select clause
               //there is no need to have the same column twice
-                if (request.includeInSelect(column)
-                    && !columnNameSet.contains(column.getName()))
-                {
-                    sqlQuery.addSelect(
-                        column.generateExprString(sqlQuery),
-                        column.getInternalType(),
-                        makeAlias(column, columnNames, columnNameSet));
+                if (column.showInDrillThrough()) {
+                    if (request.includeInSelect(column)
+                            && !columnNameSet.contains(column.getName())) {
+                        sqlQuery.addSelect(
+                                column.generateExprString(sqlQuery),
+                                column.getInternalType(),
+                                makeAlias(column, columnNames, columnNameSet));
+                    }
                 }
             }
         }

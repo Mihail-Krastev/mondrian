@@ -99,7 +99,9 @@ public class SqlQuery {
      * aliases", then iterating over a list is faster than doing a hash lookup
      * (as is used in java.util.HashSet).
      */
+    /* KOUNT: removed
     private final List<String> fromAliases;
+    */
 
     /** The SQL dialect this query is to be generated in. */
     private final Dialect dialect;
@@ -143,7 +145,9 @@ public class SqlQuery {
         this.groupBy = new ClauseList(false);
         this.having = new ClauseList(false);
         this.orderBy = new ClauseList(false);
+        /* KOUNT: removed
         this.fromAliases = new ArrayList<String>();
+        */
         this.buf = new StringBuilder(128);
         this.groupingSets = new ArrayList<ClauseList>();
         this.dialect = dialect;
@@ -212,7 +216,10 @@ public class SqlQuery {
         assert alias != null;
         assert alias.length() > 0;
 
+        /* KOUNT: removed
         if (fromAliases.contains(alias)) {
+        */
+        if (from.aliases.containsKey(alias)) {
             if (failIfExists) {
                 throw Util.newInternal(
                     "query already contains alias '" + alias + "'");
@@ -232,9 +239,12 @@ public class SqlQuery {
             buf.append(' ');
         }
         dialect.quoteIdentifier(alias, buf);
+        /* KOUNT: removed
         fromAliases.add(alias);
 
         from.add(buf.toString());
+        */
+        from.put(alias, buf.toString());
         return true;
     }
 
@@ -261,7 +271,13 @@ public class SqlQuery {
         final Map hints,
         final boolean failIfExists)
     {
+        assert alias != null;
+        assert alias.length() > 0;
+
+        /* KOUNT: removed
         if (fromAliases.contains(alias)) {
+        */
+        if (from.aliases.containsKey(alias)) {
             if (failIfExists) {
                 throw Util.newInternal(
                     "query already contains alias '" + alias + "'");
@@ -272,23 +288,32 @@ public class SqlQuery {
 
         buf.setLength(0);
         dialect.quoteIdentifier(buf, schema, name);
+        /* KOUNT: removed
         if (alias != null) {
             Util.assertTrue(alias.length() > 0);
+        */
 
             if (dialect.allowsAs()) {
                 buf.append(" as ");
             } else {
                 buf.append(' ');
             }
+        /* KOUNT: removed
             dialect.quoteIdentifier(alias, buf);
             fromAliases.add(alias);
         }
+        */
+
+        dialect.quoteIdentifier(alias, buf);
 
         if (this.allowHints) {
             dialect.appendHintsAfterFromClause(buf, hints);
         }
 
+        /* KOUNT: removed
         from.add(buf.toString());
+        */
+        from.put(alias, buf.toString());
 
         if (filter != null) {
             // append filter condition to where clause
@@ -405,6 +430,14 @@ public class SqlQuery {
         boolean addLeft = addFrom(left, leftAlias, failIfExists);
         boolean addRight = addFrom(right, rightAlias, failIfExists);
 
+        if (!addRight && // If it already existed
+            rightAlias.startsWith("outer_join_") && // And this is an outer join
+            from.get(rightAlias) != null) { // AND we haven't nulled out the alias
+          // This means we're upgrading a previously added table to be part of an outer join.
+          // We need to run the following code even if both tables were already there.
+          addRight = true;
+        }
+
         boolean added = addLeft || addRight;
         if (added) {
             buf.setLength(0);
@@ -415,7 +448,10 @@ public class SqlQuery {
             final String condition = buf.toString();
             if (dialect.allowsJoinOn()) {
                 from.addOn(
+                    /* KOUNT: removed
                     leftAlias, leftKey, rightAlias, rightKey,
+                    */
+                    leftAlias, rightAlias,
                     condition);
             } else {
                 addWhere(condition);
@@ -555,7 +591,11 @@ public class SqlQuery {
     public void addWhere(RolapStar.Condition joinCondition) {
         String left = joinCondition.getLeft().getTableAlias();
         String right = joinCondition.getRight().getTableAlias();
+        /* KOUNT: removed
         if (fromAliases.contains(left) && fromAliases.contains(right)) {
+        */
+        if (from.aliases.containsKey(left) &&
+            from.aliases.containsKey(right)) {
             addWhere(
                 joinCondition.getLeft(this),
                 " = ",
@@ -606,6 +646,10 @@ public class SqlQuery {
         this.addOrderBy(expr, expr, ascending, prepend, nullable, true);
     }
 
+    public void addOrderByLiteral (String expr) {
+      this.orderBy.add(expr);
+    }
+
     /**
      * Adds an item to the ORDER BY clause.
      *
@@ -626,6 +670,7 @@ public class SqlQuery {
     {
         String orderExpr =
             dialect.generateOrderItem(
+                (!nullable && dialect.allowsOrderByAlias()) ||
                 dialect.requiresOrderByAlias() && alias != null
                     ? dialect.quoteIdentifier(alias)
                     : expr,
@@ -795,32 +840,85 @@ public class SqlQuery {
     }
 
     private static class JoinOnClause {
+        private final String alias;
+        private final String sql;
+        private final String joinType;
         private final String condition;
+        /* KOUNT: removed
         private final String left;
         private final String right;
+        */
 
+        /* KOUNT: removed
         JoinOnClause(String condition, String left, String right) {
+        */
+        JoinOnClause (String alias, String sql, String joinType, String condition) {
             this.condition = condition;
+            /* KOUNT: removed
             this.left = left;
             this.right = right;
+            */
+            this.alias = alias;
+            this.sql = sql;
+            this.joinType = joinType;
+        }
+    }
+
+
+    private static class FromEntry {
+        private final String alias;
+        private final String sql;
+        private final List<JoinOnClause> right;
+
+        FromEntry (String alias, String sql) {
+          this.alias = alias;
+          this.sql = sql;
+          this.right = new ArrayList<JoinOnClause>();
         }
     }
 
     static class FromClauseList extends ClauseList {
+        /* KOUNT: removed
         private final List<JoinOnClause> joinOnClauses =
             new ArrayList<JoinOnClause>();
+        */
+        private final Map<String, FromEntry> aliases =
+            new TreeMap<String, FromEntry>();
 
         FromClauseList(boolean allowsDups) {
             super(allowsDups);
         }
 
+        @Override
+        public boolean isEmpty () {
+            return this.aliases.isEmpty();
+        }
+
+        public boolean put (final String alias, final String sql) {
+            if (allowDups || !this.aliases.containsKey(alias)) {
+                this.aliases.put(alias, new FromEntry(alias, sql));
+                return true;
+            }
+            return false;
+        }
+
+        public FromEntry get (final String alias) {
+            return this.aliases.get(alias);
+        }
+
+
         public void addOn(
             String leftAlias,
+            /* KOUNT: removed
             String leftKey,
+            */
             String rightAlias,
+            /* KOUNT: removed
             String rightKey,
+            */
             String condition)
         {
+            /* KOUNT: removed
             if (leftAlias == null && rightAlias == null) {
                 // do nothing
             } else if (leftAlias == null) {
@@ -833,8 +931,27 @@ public class SqlQuery {
             }
             joinOnClauses.add(
                 new JoinOnClause(condition, leftAlias, rightAlias));
+            */
+
+          String joinType = "JOIN";
+          if (rightAlias.startsWith("outer_join_")) {
+            joinType = "LEFT OUTER JOIN";
+          }
+
+          FromEntry left = this.aliases.get(leftAlias);
+          assert left != null;
+          FromEntry right = this.aliases.get(rightAlias);
+          assert right != null;
+          // We want the alias name to remain in the map, so we know if
+          // we've seen it before. So, we overwrite the entry with null to
+          // indicate that this table has been used already, and won't be
+          // added again later in the from clause.
+          this.aliases.put(rightAlias, null);
+          left.right.add(
+              new JoinOnClause(rightAlias, right.sql, joinType, condition));
         }
 
+        /* KOUNT: removed
         public void toBuffer(StringBuilder buf, List<String> fromAliases) {
             int n = 0;
             for (int i = 0; i < size(); i++) {
@@ -887,6 +1004,35 @@ public class SqlQuery {
                 buf.append(joinOnClauses.isEmpty() ? ", " : " cross join ")
                     .append(from);
             }
+        }
+        */
+        @Override
+        void toBuffer (final StringBuilder buf, final String first,
+                final String sep, final String last) {
+
+            final String intrasep = sep.substring(1);
+            int n = 0;
+            buf.append(first);
+            for (FromEntry entry : this.aliases.values()) {
+                if (entry == null) {
+                    // This from entry is already used in some join clause
+                    continue;
+                }
+                if (n++ > 0) {
+                    buf.append(sep);
+                }
+                buf.append(entry.sql);
+                for (JoinOnClause joinRight : entry.right) {
+                    buf.append(intrasep);
+                    buf.append(joinRight.joinType);
+                    buf.append(intrasep);
+                    buf.append(joinRight.sql);
+                    buf.append(intrasep);
+                    buf.append("ON ");
+                    buf.append(joinRight.condition);
+                }
+            }
+            buf.append(last);
         }
     }
 
@@ -953,7 +1099,10 @@ public class SqlQuery {
             return s;
         }
 
+        /* KOUNT: removed
         final void toBuffer(
+        */
+        void toBuffer(
             final StringBuilder buf,
             final String first,
             final String sep,

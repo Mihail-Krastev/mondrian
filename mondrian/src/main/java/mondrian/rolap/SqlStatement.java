@@ -18,13 +18,17 @@ import mondrian.spi.Dialect;
 import mondrian.spi.DialectManager;
 import mondrian.util.*;
 
+import org.apache.log4j.MDC;
+
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 
 import java.sql.*;
 import java.sql.Connection;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicLong;
 import javax.sql.DataSource;
@@ -140,6 +144,42 @@ public class SqlStatement {
             this.jdbcConnection = dataSource.getConnection();
             querySemaphore.acquire();
             haveSemaphore = true;
+            boolean formattedSql = sql.indexOf('\n') >= 0;
+
+            // Annotate sql with useful information so it's viewable within the database.
+            int insert_at = 6;
+            if (!sql.startsWith("select")) {
+                RolapUtil.LOGGER.warn("This SQL isn't a select?? " + sql);
+                insert_at = 0;
+            }
+            StringBuilder buf = new StringBuilder();
+            if (insert_at > 0) {
+                buf.append(sql.substring(0, insert_at));
+            }
+
+            LinkedHashMap<String, String> anno = new LinkedHashMap<String, String>();
+            Map<String, String> context = (Map)MDC.get("com.kount.current_report_context");
+            if (context != null) {
+                anno.putAll(context);
+            }
+            anno.put("purpose", locus.component);
+
+            buf.append(" /*");
+            String sep = formattedSql ? Util.nl + "  " : " ";
+            for (Map.Entry<String, String> e : anno.entrySet()) {
+                if (formattedSql) {
+                    buf.append(sep);
+                }
+                buf.append(e.getKey());
+                buf.append('=');
+                buf.append(e.getValue());
+            }
+            buf.append(sep);
+            buf.append("*/");
+            buf.append(sql.substring(insert_at));
+
+            String sql = buf.toString();
+
             // Trace start of execution.
             if (RolapUtil.SQL_LOGGER.isDebugEnabled()) {
                 StringBuilder sqllog = new StringBuilder();
@@ -147,7 +187,7 @@ public class SqlStatement {
                     .append(": ")
                     .append(locus.component)
                     .append(": executing sql [");
-                if (sql.indexOf('\n') >= 0) {
+                if (formattedSql) {
                     // SQL appears to be formatted as multiple lines. Make it
                     // start on its own line.
                     sqllog.append("\n");
@@ -251,7 +291,9 @@ public class SqlStatement {
             Util.close(null, statement, null);
 
             // Now handle this exception.
-            throw handle(e);
+            RuntimeException re = handle(e);
+            RolapUtil.LOGGER.warn("Exception when executing #" + id, re);
+            throw re;
         } finally {
             RolapUtil.SQL_LOGGER.debug(id + ": " + status);
 

@@ -1266,6 +1266,7 @@ public class SqlTupleReader implements TupleReader {
      * their level values.</p>
      *
      *
+     * @param sqlQuery     The query object being constructed
      * @param hierarchy    Hierarchy of the cube
      * @param levels       Levels in this hierarchy
      * @param levelDepth   Level depth at which the query is occuring
@@ -1273,6 +1274,7 @@ public class SqlTupleReader implements TupleReader {
      *
      */
     private boolean isGroupByNeeded(
+        SqlQuery sqlQuery,
         RolapHierarchy hierarchy,
         RolapLevel[] levels,
         int levelDepth)
@@ -1370,7 +1372,7 @@ public class SqlTupleReader implements TupleReader {
         int levelDepth = level.getDepth();
 
         boolean needsGroupBy =
-          isGroupByNeeded(hierarchy, levels, levelDepth);
+            isGroupByNeeded(sqlQuery, hierarchy, levels, levelDepth);
 
         for (int i = 0; i <= levelDepth; i++) {
             RolapLevel currLevel = levels[i];
@@ -1435,9 +1437,18 @@ public class SqlTupleReader implements TupleReader {
                 }
             }
 
+            boolean groupByOverride = false;
+            if (needsGroupBy) {
+              Annotation groupByAnno = currLevel.getAnnotationMap()
+                .get("groupBy");
+              if (groupByAnno != null) {
+                sqlQuery.addGroupBy((String)groupByAnno.getValue());
+                groupByOverride = true;
+              }
+            }
             final String keyAlias =
                 sqlQuery.addSelect(keySql, currLevel.getInternalType());
-            if (needsGroupBy) {
+            if (needsGroupBy && !groupByOverride) {
                 // We pass both the expression and the alias.
                 // The SQL query will figure out what to use.
                 sqlQuery.addGroupBy(keySql, keyAlias);
@@ -1445,7 +1456,7 @@ public class SqlTupleReader implements TupleReader {
             if (captionSql != null) {
                 final String captionAlias =
                     sqlQuery.addSelect(captionSql, null);
-                if (needsGroupBy) {
+                if (needsGroupBy && !groupByOverride) {
                     // We pass both the expression and the alias.
                     // The SQL query will figure out what to use.
                     sqlQuery.addGroupBy(captionSql, captionAlias);
@@ -1453,21 +1464,31 @@ public class SqlTupleReader implements TupleReader {
             }
 
             // Figure out the order-by part
+            boolean nullable = true;
+            if (whichSelect == WhichSelect.ONLY) {
+              Annotation nullableAnno = currLevel.getAnnotationMap()
+                .get("nullable");
+              if (nullableAnno != null) {
+                nullable = Boolean.valueOf(
+                    (String)nullableAnno.getValue());
+              }
+            }
+
             final String orderByAlias;
             if (!currLevel.getKeyExp().equals(currLevel.getOrdinalExp())) {
                 String ordinalSql = ordinalExp.getExpression(sqlQuery);
                 orderByAlias = sqlQuery.addSelect(ordinalSql, null);
-                if (needsGroupBy) {
+                if (needsGroupBy && !groupByOverride) {
                     sqlQuery.addGroupBy(ordinalSql, orderByAlias);
                 }
                 if (whichSelect == WhichSelect.ONLY) {
                     sqlQuery.addOrderBy(
-                        ordinalSql, orderByAlias, true, false, true, true);
+                        ordinalSql, orderByAlias, true, false, nullable, true);
                 }
             } else {
                 if (whichSelect == WhichSelect.ONLY) {
                     sqlQuery.addOrderBy(
-                        keySql, keyAlias, true, false, true, true);
+                        keySql, keyAlias, true, false, nullable, true);
                 }
             }
 
@@ -1512,7 +1533,7 @@ public class SqlTupleReader implements TupleReader {
                     propSql = property.getExp().getExpression(sqlQuery);
                 }
                 final String propAlias = sqlQuery.addSelect(propSql, null);
-                if (needsGroupBy) {
+                if (needsGroupBy && !groupByOverride) {
                     // Certain dialects allow us to eliminate properties
                     // from the group by that are functionally dependent
                     // on the level value

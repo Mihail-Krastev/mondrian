@@ -97,7 +97,9 @@ public abstract class AbstractQuerySpec implements QuerySpec {
                 // this is a funky dimension -- ignore for now
                 continue;
             }
-            table.addToFrom(sqlQuery, false, true);
+            //KOUNT FIX
+            boolean inSelect = isPartOfSelect(column);
+            boolean inFrom = inSelect;
 
             String expr = column.generateExprString(sqlQuery);
 
@@ -109,13 +111,14 @@ public abstract class AbstractQuerySpec implements QuerySpec {
                 sqlQuery);
             if (!where.equals("true")) {
                 sqlQuery.addWhere(where);
+                inFrom = true;
             }
-
-            if (countOnly) {
-                continue;
+            //KOUNT FIX
+            if (inFrom) {
+              table.addToFrom(sqlQuery, false, true);
             }
-
-            if (!isPartOfSelect(column)) {
+            //KOUNT FIX
+            if (countOnly || !inSelect) {
                 continue;
             }
 
@@ -147,6 +150,13 @@ public abstract class AbstractQuerySpec implements QuerySpec {
                     true, false, false, true);
             }
         }
+
+        // KOUNT Added block
+        String orderByOverride = getOrderByOverride();
+        if (!countOnly && orderByOverride != null) {
+          sqlQuery.addOrderByLiteral(orderByOverride);
+        }
+        //////////////////////////
 
         // Add compound member predicates
         extraPredicates(sqlQuery);
@@ -184,6 +194,10 @@ public abstract class AbstractQuerySpec implements QuerySpec {
      */
     protected boolean isOrdered() {
         return false;
+    }
+
+    protected String getOrderByOverride () {
+      return null;
     }
 
     public Pair<String, List<SqlStatement.Type>> generateSqlQuery() {

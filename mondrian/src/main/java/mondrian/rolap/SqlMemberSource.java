@@ -666,13 +666,19 @@ RME is this right
         }
 
         final String orderBy = level.getOrdinalExp().getExpression(sqlQuery);
+        boolean nullable = true;
+        Annotation nullableAnno = level.getAnnotationMap().get("nullable");
+        if (nullableAnno != null) {
+          nullable = Boolean.valueOf(
+              (String)nullableAnno.getValue());
+        }
         if (!orderBy.equals(q)) {
             String orderAlias = sqlQuery.addSelectGroupBy(orderBy, null);
             sqlQuery.addOrderBy(
-                orderBy, orderAlias, true, false, true, true);
+                orderBy, orderAlias, true, false, nullable, true);
         } else {
             sqlQuery.addOrderBy(
-                q, idAlias, true, false, true, true);
+                q, idAlias, true, false, nullable, true);
         }
 
         RolapProperty[] properties = level.getProperties();
@@ -1037,6 +1043,24 @@ RME is this right
                     }
                 }
             }
+            if (stmt.rowCount == 0 && constraint != null &&
+                "ChildByNameConstraint(#null)".equals(constraint.toString())) {
+              // This handles the special case for outer_join_* dimension
+              // tables which will not return any rows when trying to find
+              // the #null member.
+
+              Object value = RolapUtil.sqlNullValue;
+              Object key = cache.makeKey(parentMember2, value);
+              RolapMember member = cache.getMember(key, checkCacheStatus);
+              if (member == null) {
+
+                Map<String, Object> empty = Collections.emptyMap();
+                member = makeMember(parentMember2, childLevel, value, null,
+                    parentChild, null, empty, key);
+              }
+              children.toArray();
+              addAsOldestSibling(children, member);
+            }
         } catch (SQLException e) {
             throw stmt.handle(e);
         } finally {
@@ -1053,6 +1077,39 @@ RME is this right
         SqlStatement stmt,
         Object key,
         int columnOffset)
+        throws SQLException
+    {
+      Object orderKey = null;
+      Property[] properties = childLevel.getProperties();
+      Map<String, Object> props =
+        new HashMap<String, Object>(properties.length);
+
+      final List<SqlStatement.Accessor> accessors = stmt.getAccessors();
+      if (!childLevel.getOrdinalExp().equals(childLevel.getKeyExp())) {
+        if (assignOrderKeys) {
+          orderKey = accessors.get(columnOffset).get();
+        }
+        ++columnOffset;
+      }
+      for (int j = 0; j < properties.length; j++) {
+        Property property = properties[j];
+        props.put(property.getName(),
+            accessors.get(columnOffset + j).get());
+      }
+      return makeMember(parentMember, childLevel, value, captionValue,
+          parentChild, orderKey, props, key);
+    }
+
+    protected RolapMember makeMember(
+        RolapMember parentMember,
+        RolapLevel childLevel,
+        Object value,
+        Object captionValue,
+        boolean parentChild,
+        Object orderKey,
+        Map<String, Object> props,
+        Object key
+        )
         throws SQLException
     {
         final RolapLevel rolapChildLevel;
@@ -1084,20 +1141,11 @@ RME is this right
                 : new RolapParentChildMemberNoClosure(
                     parentMember, rolapChildLevel, value, member);
         }
-        Property[] properties = childLevel.getProperties();
-        final List<SqlStatement.Accessor> accessors = stmt.getAccessors();
-        if (!childLevel.getOrdinalExp().equals(childLevel.getKeyExp())) {
-            if (assignOrderKeys) {
-                Object orderKey = accessors.get(columnOffset).get();
-                setOrderKey(member, orderKey);
-            }
-            ++columnOffset;
+        if (orderKey != null) {
+          setOrderKey(member, orderKey);
         }
-        for (int j = 0; j < properties.length; j++) {
-            Property property = properties[j];
-            member.setProperty(
-                property.getName(),
-                getPooledValue(accessors.get(columnOffset + j).get()));
+        for (Map.Entry<String, Object> e : props.entrySet()) {
+            member.setProperty( e.getKey(), getPooledValue(e.getValue()));
         }
         cache.putMember(key, member);
         return member;

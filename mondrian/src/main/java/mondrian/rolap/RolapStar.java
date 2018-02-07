@@ -881,15 +881,22 @@ public class RolapStar {
         private AtomicLong approxCardinality = new AtomicLong(
             Long.MIN_VALUE);
 
+        private boolean showInDrillThrough = true;
+
+        private String drillThroughAlias = null;
+
         private Column(
             String name,
             Table table,
             MondrianDef.Expression expression,
-            Dialect.Datatype datatype)
+            Dialect.Datatype datatype,
+            Map<String, Annotation> annotations
+            )
         {
             this(
                 name, table, expression, datatype, null, null,
-                null, null, Integer.MIN_VALUE, table.star.nextColumnCount());
+                null, null, Integer.MIN_VALUE, table.star.nextColumnCount(),
+                annotations);
         }
 
         private Column(
@@ -902,7 +909,8 @@ public class RolapStar {
             Column parentColumn,
             String usagePrefix,
             int approxCardinality,
-            int bitPosition)
+            int bitPosition,
+            Map<String, Annotation> annotations)
         {
             this.name = name;
             this.table = table;
@@ -921,6 +929,18 @@ public class RolapStar {
             }
             if (table != null) {
                 table.star.addColumn(this);
+            }
+
+            if (annotations != null) {
+              if (annotations.containsKey("showInDrillThrough")) {
+                this.showInDrillThrough = Boolean.valueOf(
+                    (String)annotations.get("showInDrillThrough").getValue());
+              }
+
+              if (annotations.containsKey("drillThroughAlias")) {
+                this.drillThroughAlias =
+                  (String)annotations.get("drillThroughAlias").getValue();
+              }
             }
         }
 
@@ -941,7 +961,8 @@ public class RolapStar {
                 null,
                 null,
                 Integer.MIN_VALUE,
-                0);
+                0,
+                null);
         }
 
         public boolean equals(Object obj) {
@@ -1025,6 +1046,15 @@ public class RolapStar {
                         table.relation, expression, approxCardinality.get()));
             }
             return approxCardinality.get();
+        }
+
+        public boolean showInDrillThrough () {
+          return this.showInDrillThrough;
+        }
+
+        public String getDrillThroughAlias () {
+          return this.drillThroughAlias != null ? this.drillThroughAlias :
+            this.getName();
         }
 
         /**
@@ -1180,9 +1210,11 @@ public class RolapStar {
             RolapAggregator aggregator,
             Table table,
             MondrianDef.Expression expression,
-            Dialect.Datatype datatype)
+            Dialect.Datatype datatype,
+            Map<String, Annotation> annotations
+            )
         {
-            super(name, table, expression, datatype);
+            super(name, table, expression, datatype, annotations);
             this.cubeName = cubeName;
             this.aggregator = aggregator;
         }
@@ -1452,7 +1484,9 @@ public class RolapStar {
                 measure.getAggregator(),
                 this,
                 measure.getMondrianDefExpression(),
-                measure.getDatatype());
+                measure.getDatatype(),
+                measure.getAnnotationMap()
+                );
 
             measure.setStarMeasure(starMeasure); // reverse mapping
 
@@ -1580,7 +1614,9 @@ public class RolapStar {
                     parentColumn,
                     usagePrefix,
                     level.getApproxRowCount(),
-                    star.nextColumnCount());
+                    star.nextColumnCount(),
+                    level.getAnnotationMap()
+                    );
                 addColumn(column);
             }
             return column;
@@ -1744,6 +1780,19 @@ public class RolapStar {
             boolean failIfExists,
             boolean joinToParent)
         {
+          if (alias.startsWith("outer_join_")) {
+            Util.assertTrue(joinToParent);
+            // Making a fake MondrianDef.Join object...
+            MondrianDef.Join join = new MondrianDef.Join();
+            join.leftAlias = parent.alias;
+            join.leftKey = ((MondrianDef.Column)joinCondition.getLeft()).name;
+            join.left = parent.relation;
+            join.rightAlias = alias;
+            join.rightKey = ((MondrianDef.Column)joinCondition.getRight())
+              .name;
+            join.right = relation;
+            query.addFrom(join, alias, failIfExists);
+          } else {
             query.addFrom(relation, alias, failIfExists);
             Util.assertTrue((parent == null) == (joinCondition == null));
             if (joinToParent) {
@@ -1754,6 +1803,7 @@ public class RolapStar {
                     query.addWhere(joinCondition.toString(query));
                 }
             }
+          }
         }
 
         /**

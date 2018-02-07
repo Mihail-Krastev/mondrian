@@ -99,7 +99,9 @@ abstract class MondrianOlap4jStatement
                 cell.drillThroughInternal(
                     drillThrough.getMaxRowCount(),
                     drillThrough.getFirstRowOrdinal(),
-                    drillThrough.getReturnList(),
+                    /* KOUNT disable drill through internal
+                    drillThrough.getReturnList(), */
+                     Collections.<OlapElement>emptyList(),
                     true,
                     null,
                     rowCountSlot);

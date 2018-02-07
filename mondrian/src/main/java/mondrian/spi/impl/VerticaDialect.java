@@ -69,6 +69,12 @@ public class VerticaDialect extends JdbcDialectImpl {
         return false;
     }
 
+    @Override
+    public boolean allowsJoinOn () { return true; }
+
+    @Override
+    public boolean allowsOrderByAlias () { return true; }
+
     public String generateInline(
         List<String> columnNames,
         List<String> columnTypes,
@@ -76,6 +82,18 @@ public class VerticaDialect extends JdbcDialectImpl {
     {
         return generateInlineGeneric(
             columnNames, columnTypes, valueList, null, false);
+    }
+
+    @Override
+    public void quote (StringBuilder buf, Object value, Datatype datatype) {
+        if (datatype == Datatype.Integer) {
+            String valueString = value.toString();
+            if (valueString.endsWith(".0")) {
+                buf.append(valueString.substring(0, valueString.length() - 2));
+                return;
+            }
+        }
+        super.quote(buf, value, datatype);
     }
 
     private static final Map<Integer, SqlStatement.Type> VERTICA_TYPE_MAP;
